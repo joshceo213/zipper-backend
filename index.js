@@ -1,62 +1,123 @@
+// index.js (or server.js)
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { generateOTP, saveOTP, verifyOTP } = require('./otpService');
+const { sendEmail } = require('./mailer');
+const { sendSMS } = require('./smsService');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Import routes
-const busRoutes = require('./routes/buses');
-const bookingRoutes = require('./routes/bookings');
-const adminRoutes = require('./routes/admin');
+// Mock DB (replace with real DB!)
+const users = []; // Store users {name, email, phone, password, role, verified}
 
-// Use routes
-app.use('/buses', busRoutes);
-app.use('/bookings', bookingRoutes);
-app.use('/admin', adminRoutes);
+app.post('/signup', async (req, res) => {
+  try {
+    const { name, identifier, password, role } = req.body;
+    if (!name || !identifier || !password || !role) {
+      return res.status(400).json({ message: 'Please fill all fields' });
+    }
 
-// Mock login route
+    // Check if user exists by email or phone
+    const exists = users.find(
+      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
+    );
+    if (exists) {
+      return res.status(409).json({ message: 'This account is already in the system.' });
+    }
+
+    // Determine if identifier is email or phone
+    const isEmail = identifier.includes('@');
+
+    // Create user but NOT verified yet
+    const user = {
+      id: users.length + 1,
+      name,
+      email: isEmail ? identifier.toLowerCase() : null,
+      phone: isEmail ? null : identifier,
+      password, // TODO: hash in real app!
+      role,
+      verified: false,
+    };
+
+    users.push(user);
+
+    // Generate OTP
+    const otp = generateOTP();
+    saveOTP(identifier, otp);
+
+    // Send OTP via email and SMS
+    if (isEmail) await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
+    else await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+
+    return res.json({ message: 'OTP sent, please verify your account.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/verify-otp', (req, res) => {
+  try {
+    const { identifier, otp } = req.body;
+    if (!identifier || !otp) {
+      return res.status(400).json({ message: 'Identifier and OTP required' });
+    }
+
+    // Verify OTP
+    if (!verifyOTP(identifier, otp)) {
+      return res.status(400).json({ message: 'Invalid or expired OTP' });
+    }
+
+    // Mark user verified
+    const user = users.find(
+      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
+    );
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.verified = true;
+
+    res.json({ message: 'Account verified successfully', userId: user.id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Example login route (verify user and verified status)
 app.post('/login', (req, res) => {
-  const { identifier, password } = req.body;
+  try {
+    const { identifier, password } = req.body;
+    if (!identifier || !password) {
+      return res.status(400).json({ message: 'Please provide identifier and password' });
+    }
 
-  // Mock check: allow any identifier/password combo
-  if (!identifier || !password) {
-    return res.status(400).json({ message: 'Missing credentials' });
+    const user = users.find(
+      (u) => (u.email === identifier.toLowerCase() || u.phone === identifier) && u.password === password
+    );
+
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    if (!user.verified) {
+      return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
+    }
+
+    // TODO: issue JWT token or session here
+
+    res.json({ id: user.id, name: user.name, role: user.role });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
-
-  console.log('Login request received:', req.body);
-
-  res.json({
-    token: 'mock-token-123',
-    name: identifier,
-    role: 'Traveler' // You can change this depending on your test
-  });
 });
 
-// Mock signup route
-app.post('/signup', (req, res) => {
-  const { name, identifier, password, role } = req.body;
-
-  if (!name || !identifier || !password || !role) {
-    return res.status(400).json({ message: 'Missing fields' });
-  }
-
-  console.log('Signup request received:', req.body);
-
-  res.json({
-    id: Date.now(),
-    name,
-    role
-  });
-});
-
-// Default test route
-app.get('/', (req, res) => {
-  res.send('Zipper Backend is running 🚐');
-});
-
-// Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
