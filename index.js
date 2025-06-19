@@ -11,11 +11,10 @@ app.use(express.json());
 
 // In-memory "database"
 const users = [];
-const otps = new Map(); // simple Map to hold OTPs keyed by identifier
 
 app.post('/signup', async (req, res) => {
   try {
-    const { name, identifier, password, role } = req.body;
+    const { name, identifier, password, role, busCompany, accountHandler } = req.body;
     if (!name || !identifier || !password || !role) {
       return res.status(400).json({ message: 'Please fill all fields' });
     }
@@ -34,8 +33,10 @@ app.post('/signup', async (req, res) => {
       name,
       email: isEmail ? identifier.toLowerCase() : null,
       phone: isEmail ? null : identifier,
-      password, // TODO: hash this in a real app
+      password, // TODO: hash in production
       role,
+      busCompany: role === 'BusOwner' ? busCompany : null,
+      accountHandler: role === 'BusOwner' ? accountHandler : null,
       verified: false,
     };
 
@@ -115,34 +116,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-// otpService.js example for your reference:
-
-/*
-// otpService.js
-const otps = new Map();
-
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-function saveOTP(identifier, otp) {
-  otps.set(identifier, { otp, expiresAt: Date.now() + 5 * 60 * 1000 }); // 5 minutes expiry
-}
-
-function verifyOTP(identifier, otp) {
-  const record = otps.get(identifier);
-  if (!record) return false;
-  if (record.otp !== otp) return false;
-  if (Date.now() > record.expiresAt) {
-    otps.delete(identifier);
-    return false;
-  }
-  otps.delete(identifier);
-  return true;
-}
-
-module.exports = { generateOTP, saveOTP, verifyOTP };
-*/
-
-// Similar minimal implementations needed for mailer.js and smsService.js (using your Resend and SMS provider APIs)
