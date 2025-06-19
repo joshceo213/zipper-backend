@@ -1,12 +1,11 @@
-// otpService.js
 const otps = new Map();
 
 function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 function saveOTP(identifier, otp) {
-  otps.set(identifier, { otp, expiresAt: Date.now() + 5 * 60 * 1000 }); // expires in 5 mins
+  otps.set(identifier, { otp, expiresAt: Date.now() + 5 * 60 * 1000 }); // expires in 5 minutes
 }
 
 function verifyOTP(identifier, otp) {
