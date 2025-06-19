@@ -1,4 +1,3 @@
-// index.js (or server.js)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -10,8 +9,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Mock DB (replace with real DB!)
-const users = []; // Store users {name, email, phone, password, role, verified}
+// In-memory "database"
+const users = [];
+const otps = new Map(); // simple Map to hold OTPs keyed by identifier
 
 app.post('/signup', async (req, res) => {
   try {
@@ -20,7 +20,6 @@ app.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Please fill all fields' });
     }
 
-    // Check if user exists by email or phone
     const exists = users.find(
       (u) => u.email === identifier.toLowerCase() || u.phone === identifier
     );
@@ -28,29 +27,28 @@ app.post('/signup', async (req, res) => {
       return res.status(409).json({ message: 'This account is already in the system.' });
     }
 
-    // Determine if identifier is email or phone
     const isEmail = identifier.includes('@');
 
-    // Create user but NOT verified yet
     const user = {
       id: users.length + 1,
       name,
       email: isEmail ? identifier.toLowerCase() : null,
       phone: isEmail ? null : identifier,
-      password, // TODO: hash in real app!
+      password, // TODO: hash this in a real app
       role,
       verified: false,
     };
 
     users.push(user);
 
-    // Generate OTP
     const otp = generateOTP();
     saveOTP(identifier, otp);
 
-    // Send OTP via email and SMS
-    if (isEmail) await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
-    else await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+    if (isEmail) {
+      await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
+    } else {
+      await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+    }
 
     return res.json({ message: 'OTP sent, please verify your account.' });
   } catch (error) {
@@ -66,12 +64,10 @@ app.post('/verify-otp', (req, res) => {
       return res.status(400).json({ message: 'Identifier and OTP required' });
     }
 
-    // Verify OTP
     if (!verifyOTP(identifier, otp)) {
       return res.status(400).json({ message: 'Invalid or expired OTP' });
     }
 
-    // Mark user verified
     const user = users.find(
       (u) => u.email === identifier.toLowerCase() || u.phone === identifier
     );
@@ -80,15 +76,13 @@ app.post('/verify-otp', (req, res) => {
     }
 
     user.verified = true;
-
-    res.json({ message: 'Account verified successfully', userId: user.id });
+    return res.json({ message: 'Account verified successfully', userId: user.id });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Example login route (verify user and verified status)
 app.post('/login', (req, res) => {
   try {
     const { identifier, password } = req.body;
@@ -110,7 +104,7 @@ app.post('/login', (req, res) => {
 
     // TODO: issue JWT token or session here
 
-    res.json({ id: user.id, name: user.name, role: user.role });
+    return res.json({ id: user.id, name: user.name, role: user.role });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -121,3 +115,34 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// otpService.js example for your reference:
+
+/*
+// otpService.js
+const otps = new Map();
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function saveOTP(identifier, otp) {
+  otps.set(identifier, { otp, expiresAt: Date.now() + 5 * 60 * 1000 }); // 5 minutes expiry
+}
+
+function verifyOTP(identifier, otp) {
+  const record = otps.get(identifier);
+  if (!record) return false;
+  if (record.otp !== otp) return false;
+  if (Date.now() > record.expiresAt) {
+    otps.delete(identifier);
+    return false;
+  }
+  otps.delete(identifier);
+  return true;
+}
+
+module.exports = { generateOTP, saveOTP, verifyOTP };
+*/
+
+// Similar minimal implementations needed for mailer.js and smsService.js (using your Resend and SMS provider APIs)
