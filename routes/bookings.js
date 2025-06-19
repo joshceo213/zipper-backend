@@ -1,16 +1,28 @@
 const express = require('express');
 const router = express.Router();
 
+// In-memory bookings list
 const bookings = [];
 
-// POST a new booking
 router.post('/', (req, res) => {
-  const booking = req.body;
+  const { userId, busId, travelDate } = req.body;
+
+  if (!userId || !busId || !travelDate) {
+    return res.status(400).json({ message: 'Missing booking info' });
+  }
+
+  const booking = {
+    id: bookings.length + 1,
+    userId,
+    busId,
+    travelDate,
+    createdAt: new Date(),
+  };
+
   bookings.push(booking);
-  res.status(201).json({ message: 'Booking confirmed', booking });
+  return res.status(201).json({ message: 'Booking successful', booking });
 });
 
-// GET all bookings
 router.get('/', (req, res) => {
   res.json(bookings);
 });
