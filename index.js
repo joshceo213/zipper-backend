@@ -32,12 +32,13 @@ app.post('/signup', async (req, res) => {
     }
 
     const isEmail = identifier.includes('@');
+    const formattedPhone = !isEmail && !identifier.startsWith('+') ? `+${identifier}` : identifier;
 
     const user = {
       id: users.length + 1,
       name,
       email: isEmail ? identifier.toLowerCase() : null,
-      phone: isEmail ? null : identifier,
+      phone: isEmail ? null : formattedPhone,
       password,
       role,
       verified: false,
@@ -56,7 +57,7 @@ app.post('/signup', async (req, res) => {
       if (isEmail) {
         await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
       } else {
-        await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+        await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
       }
 
       return res.status(200).json({ message: 'OTP sent, please verify your account.' });
@@ -84,7 +85,7 @@ app.post('/verify-otp', (req, res) => {
     }
 
     const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
+      (u) => u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`
     );
 
     if (!user) {
@@ -109,7 +110,7 @@ app.post('/resend-otp', async (req, res) => {
     }
 
     const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
+      (u) => u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`
     );
 
     if (!user) {
@@ -123,7 +124,8 @@ app.post('/resend-otp', async (req, res) => {
       if (user.email) {
         await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
       } else {
-        await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+        const formattedPhone = user.phone.startsWith('+') ? user.phone : `+${user.phone}`;
+        await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
       }
 
       return res.status(200).json({ message: 'OTP resent successfully.' });
@@ -146,7 +148,9 @@ app.post('/login', (req, res) => {
     }
 
     const user = users.find(
-      (u) => (u.email === identifier.toLowerCase() || u.phone === identifier) && u.password === password
+      (u) =>
+        (u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`) &&
+        u.password === password
     );
 
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
