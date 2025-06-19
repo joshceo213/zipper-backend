@@ -13,12 +13,15 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 
 async function sendSMS(to, message) {
   try {
+    // Ensure phone number is in E.164 format starting with +
+    const formattedTo = to.startsWith('+') ? to : `+${to}`;
+
     const result = await client.messages.create({
       body: message,
       from: process.env.TWILIO_PHONE_NUMBER,
-      to: to,
+      to: formattedTo,
     });
-    console.log(`SMS sent to ${to}`, result.sid);
+    console.log(`SMS sent to ${formattedTo}`, result.sid);
   } catch (error) {
     console.error('Error sending SMS:', error.message);
     throw new Error('Failed to send SMS');
