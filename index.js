@@ -1,6 +1,9 @@
-require('dotenv').config();
+// index.js
+require('dotenv').config(); // Load .env first
+
 const express = require('express');
 const cors = require('cors');
+
 const { generateOTP, saveOTP, verifyOTP } = require('./otpService');
 const { sendEmail } = require('./mailer');
 const { sendSMS } = require('./smsService');
@@ -9,14 +12,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory "database"
+// In-memory DB (replace with actual DB later)
 const users = [];
 
+// 🔒 Routes
 app.post('/signup', async (req, res) => {
   try {
-    const { name, identifier, password, role, busCompany, accountHandler } = req.body;
+    const { name, identifier, password, role, busCompany, accountManager } = req.body;
+
     if (!name || !identifier || !password || !role) {
-      return res.status(400).json({ message: 'Please fill all fields' });
+      return res.status(400).json({ message: 'Please fill all required fields.' });
     }
 
     const exists = users.find(
@@ -33,11 +38,13 @@ app.post('/signup', async (req, res) => {
       name,
       email: isEmail ? identifier.toLowerCase() : null,
       phone: isEmail ? null : identifier,
-      password, // TODO: hash in production
+      password,
       role,
-      busCompany: role === 'BusOwner' ? busCompany : null,
-      accountHandler: role === 'BusOwner' ? accountHandler : null,
       verified: false,
+      ...(role === 'BusOwner' && {
+        busCompany,
+        accountManager,
+      }),
     };
 
     users.push(user);
@@ -45,42 +52,49 @@ app.post('/signup', async (req, res) => {
     const otp = generateOTP();
     saveOTP(identifier, otp);
 
-    if (isEmail) {
-      await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
-    } else {
-      await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
-    }
+    try {
+      if (isEmail) {
+        await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
+      } else {
+        await sendSMS(user.phone, `Your OTP for Zipper is: ${otp}`);
+      }
 
-    return res.json({ message: 'OTP sent, please verify your account.' });
+      return res.status(200).json({ message: 'OTP sent, please verify your account.' });
+    } catch (err) {
+      console.error('OTP Send Error:', err.message);
+      return res.status(500).json({ message: 'Failed to send OTP.' });
+    }
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Signup Error:', error.message);
+    res.status(500).json({ message: 'Internal server error during signup.' });
   }
 });
 
 app.post('/verify-otp', (req, res) => {
   try {
     const { identifier, otp } = req.body;
+
     if (!identifier || !otp) {
-      return res.status(400).json({ message: 'Identifier and OTP required' });
+      return res.status(400).json({ message: 'Identifier and OTP required.' });
     }
 
     if (!verifyOTP(identifier, otp)) {
-      return res.status(400).json({ message: 'Invalid or expired OTP' });
+      return res.status(400).json({ message: 'Invalid or expired OTP.' });
     }
 
     const user = users.find(
       (u) => u.email === identifier.toLowerCase() || u.phone === identifier
     );
+
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'User not found.' });
     }
 
     user.verified = true;
-    return res.json({ message: 'Account verified successfully', userId: user.id });
+    res.json({ message: 'Account verified successfully ✅', userId: user.id });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Verify OTP error:', error.message);
+    res.status(500).json({ message: 'Internal server error during OTP verification.' });
   }
 });
 
@@ -95,24 +109,22 @@ app.post('/login', (req, res) => {
       (u) => (u.email === identifier.toLowerCase() || u.phone === identifier) && u.password === password
     );
 
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    if (!user.verified) {
-      return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
-    }
-
-    // TODO: issue JWT token or session here
+    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    if (!user.verified) return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
 
     return res.json({ id: user.id, name: user.name, role: user.role });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Login Error:', error.message);
+    res.status(500).json({ message: 'Internal server error during login.' });
   }
+});
+
+// Default route
+app.get('/', (req, res) => {
+  res.send('Zipper Backend is running 🚐');
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
