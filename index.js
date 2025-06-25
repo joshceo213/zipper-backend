@@ -1,65 +1,56 @@
-// index.js
-require('dotenv').config(); // Load .env first
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-
 const { generateOTP, saveOTP, verifyOTP } = require('./otpService');
-const { sendEmail } = require('./mailer');
 const { sendSMS } = require('./smsService');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory DB (replace with actual DB later)
+// In-memory DB (replace with real DB later)
 const users = [];
 
 // 🔐 Signup
 app.post('/signup', async (req, res) => {
   try {
-    const { name, identifier, password, role, busCompany, accountManager } = req.body;
+    const { name, identifier, password, role, companyName, handlerName, contactNumber } = req.body;
 
     if (!name || !identifier || !password || !role) {
       return res.status(400).json({ message: 'Please fill all required fields.' });
     }
 
-    const exists = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
+    const existingUser = users.find(
+      (u) => u.phone === identifier || u.phone === `+${identifier}`
     );
-    if (exists) {
+    if (existingUser) {
       return res.status(409).json({ message: 'This account is already in the system.' });
     }
 
-    const isEmail = identifier.includes('@');
-    const formattedPhone = !isEmail && !identifier.startsWith('+') ? `+${identifier}` : identifier;
+    const formattedPhone = identifier.startsWith('+') ? identifier : `+${identifier}`;
 
-    const user = {
+    const newUser = {
       id: users.length + 1,
       name,
-      email: isEmail ? identifier.toLowerCase() : null,
-      phone: isEmail ? null : formattedPhone,
+      phone: formattedPhone,
       password,
       role,
       verified: false,
       ...(role === 'BusOwner' && {
-        busCompany,
-        accountManager,
+        companyName,
+        handlerName,
+        contactNumber,
       }),
     };
 
-    users.push(user);
+    users.push(newUser);
 
     const otp = generateOTP();
-    saveOTP(identifier, otp);
+    saveOTP(formattedPhone, otp);
 
     try {
-      if (isEmail) {
-        await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
-      } else {
-        await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
-      }
-
+      await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
       return res.status(200).json({ message: 'OTP sent, please verify your account.' });
     } catch (err) {
       console.error('OTP Send Error:', err.message);
@@ -75,27 +66,21 @@ app.post('/signup', async (req, res) => {
 app.post('/verify-otp', (req, res) => {
   try {
     const { identifier, otp } = req.body;
+    const formattedPhone = identifier.startsWith('+') ? identifier : `+${identifier}`;
 
-    if (!identifier || !otp) {
-      return res.status(400).json({ message: 'Identifier and OTP required.' });
-    }
-
-    if (!verifyOTP(identifier, otp)) {
+    if (!verifyOTP(formattedPhone, otp)) {
       return res.status(400).json({ message: 'Invalid or expired OTP.' });
     }
 
-    const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`
-    );
-
+    const user = users.find((u) => u.phone === formattedPhone);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
     user.verified = true;
-    res.json({ message: 'Account verified successfully ✅', userId: user.id });
+    return res.json({ message: 'Account verified successfully ✅', userId: user.id });
   } catch (error) {
-    console.error('Verify OTP error:', error.message);
+    console.error('Verify OTP Error:', error.message);
     res.status(500).json({ message: 'Internal server error during OTP verification.' });
   }
 });
@@ -104,37 +89,25 @@ app.post('/verify-otp', (req, res) => {
 app.post('/resend-otp', async (req, res) => {
   try {
     const { identifier } = req.body;
+    const formattedPhone = identifier.startsWith('+') ? identifier : `+${identifier}`;
 
-    if (!identifier) {
-      return res.status(400).json({ message: 'Identifier is required' });
-    }
-
-    const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`
-    );
-
+    const user = users.find((u) => u.phone === formattedPhone);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     const otp = generateOTP();
-    saveOTP(identifier, otp);
+    saveOTP(formattedPhone, otp);
 
     try {
-      if (user.email) {
-        await sendEmail(user.email, 'Your OTP for Zipper', `Your OTP is: ${otp}`);
-      } else {
-        const formattedPhone = user.phone.startsWith('+') ? user.phone : `+${user.phone}`;
-        await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
-      }
-
+      await sendSMS(formattedPhone, `Your OTP for Zipper is: ${otp}`);
       return res.status(200).json({ message: 'OTP resent successfully.' });
     } catch (err) {
       console.error('OTP Resend Error:', err.message);
       return res.status(500).json({ message: 'Failed to resend OTP.' });
     }
   } catch (error) {
-    console.error('Resend OTP error:', error.message);
+    console.error('Resend OTP Error:', error.message);
     res.status(500).json({ message: 'Internal server error during resend OTP.' });
   }
 });
@@ -143,18 +116,19 @@ app.post('/resend-otp', async (req, res) => {
 app.post('/login', (req, res) => {
   try {
     const { identifier, password } = req.body;
-    if (!identifier || !password) {
-      return res.status(400).json({ message: 'Please provide identifier and password' });
-    }
+    const formattedPhone = identifier.startsWith('+') ? identifier : `+${identifier}`;
 
     const user = users.find(
-      (u) =>
-        (u.email === identifier.toLowerCase() || u.phone === identifier || u.phone === `+${identifier}`) &&
-        u.password === password
+      (u) => u.phone === formattedPhone && u.password === password
     );
 
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    if (!user.verified) return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    if (!user.verified) {
+      return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
+    }
 
     return res.json({ id: user.id, name: user.name, role: user.role });
   } catch (error) {
@@ -163,7 +137,7 @@ app.post('/login', (req, res) => {
   }
 });
 
-// 🌐 Default
+// 🌐 Default route
 app.get('/', (req, res) => {
   res.send('Zipper Backend is running 🚐');
 });
