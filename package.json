@@ -1,7 +1,7 @@
 {
-  "name": "zipper-backend",
+  "name": "tumina-backend",
   "version": "1.0.0",
-  "description": "Backend for Zipper intercity bus booking app",
+  "description": "Backend for Tumina intercity bus booking app",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
