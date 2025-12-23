@@ -1,16 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { generateOTP, saveOTP, verifyOTP } = require('../services/otpService');
+const bcrypt = require('bcryptjs');
+const User = require('../models/User'); // Path to your new model
+const { generateOTP } = require('../services/otpService');
 const { sendEmail } = require('../services/mailer');
 const { sendSMS } = require('../services/smsService');
 
-// In-memory user and OTP stores
-const users = [];
-const otps = new Map();
-
 /**
  * @route POST /signup
- * @desc Register new user and send OTP
  */
 router.post('/signup', async (req, res) => {
   try {
@@ -20,40 +17,45 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Please fill all required fields' });
     }
 
-    // Check if user already exists
-    const exists = users.find(u => u.email === identifier.toLowerCase() || u.phone === identifier);
+    // 1. Check if user already exists in DB
+    const isEmail = identifier.includes('@');
+    const query = isEmail ? { email: identifier.toLowerCase() } : { phone: identifier };
+    const exists = await User.findOne(query);
+    
     if (exists) {
       return res.status(409).json({ message: 'This account is already in the system.' });
     }
 
-    const isEmail = identifier.includes('@');
+    // 2. Hash Password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    const user = {
-      id: users.length + 1,
-      name,
-      email: isEmail ? identifier.toLowerCase() : null,
-      phone: isEmail ? null : identifier,
-      password,
-      role,
-      verified: false,
-      busCompany: role === 'Bus Owner' ? busCompany : null,
-      handlerName: role === 'Bus Owner' ? handlerName : null,
-    };
-
-    users.push(user);
-
-    // Generate and save OTP
+    // 3. Generate OTP
     const otp = generateOTP();
-    saveOTP(identifier, otp);
+    const otpExpiry = new Date(Date.now() + 10 * 60000); // 10 mins
 
-    // Send OTP via email or SMS
+    // 4. Create User in MongoDB
+    const newUser = new User({
+      phone: isEmail ? null : identifier,
+      email: isEmail ? identifier.toLowerCase() : null,
+      password: hashedPassword,
+      role: role, // Ensure this matches 'traveler' or 'bus_owner' from your model
+      isVerified: false,
+      otp: { code: otp, expiry: otpExpiry },
+      companyName: busCompany,
+      agentName: handlerName
+    });
+
+    await newUser.save();
+
+    // 5. Send OTP
     if (isEmail) {
-      await sendEmail(user.email, 'Tumina OTP Verification', `Your OTP is: ${otp}`);
+      await sendEmail(identifier, 'Tumina OTP Verification', `Your OTP is: ${otp}`);
     } else {
-      await sendSMS(user.phone, `Your OTP for Tumina is: ${otp}`);
+      await sendSMS(identifier, `Your OTP for Tumina is: ${otp}`);
     }
 
-    return res.json({ message: 'OTP sent, please verify your account.' });
+    return res.json({ message: 'OTP sent, please verify your account.', identifier });
   } catch (err) {
     console.error('Signup error:', err);
     return res.status(500).json({ message: 'Server error' });
@@ -62,94 +64,61 @@ router.post('/signup', async (req, res) => {
 
 /**
  * @route POST /verify-otp
- * @desc Verify OTP for account
  */
-router.post('/verify-otp', (req, res) => {
+router.post('/verify-otp', async (req, res) => {
   try {
     const { identifier, otp } = req.body;
-    if (!identifier || !otp) {
-      return res.status(400).json({ message: 'Identifier and OTP required' });
-    }
+    const isEmail = identifier.includes('@');
+    const query = isEmail ? { email: identifier.toLowerCase() } : { phone: identifier };
 
-    if (!verifyOTP(identifier, otp)) {
+    const user = await User.findOne(query);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Verify code and expiry
+    if (user.otp.code !== otp || new Date() > user.otp.expiry) {
       return res.status(400).json({ message: 'Invalid or expired OTP' });
     }
 
-    const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
-    );
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    user.isVerified = true;
+    user.otp.code = undefined; // Clear OTP after use
+    await user.save();
 
-    user.verified = true;
-
-    return res.json({ message: 'Account verified successfully', userId: user.id });
+    return res.json({ 
+      message: 'Account verified successfully', 
+      role: user.role,
+      userId: user._id 
+    });
   } catch (err) {
-    console.error('OTP verification error:', err);
-    return res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/**
- * @route POST /resend-otp
- * @desc Resend OTP to user
- */
-router.post('/resend-otp', async (req, res) => {
-  try {
-    const { identifier } = req.body;
-    if (!identifier) return res.status(400).json({ message: 'Identifier required' });
-
-    const user = users.find(
-      (u) => u.email === identifier.toLowerCase() || u.phone === identifier
-    );
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    const otp = generateOTP();
-    saveOTP(identifier, otp);
-
-    if (user.email) {
-      await sendEmail(user.email, 'Tumina OTP Verification', `Your OTP is: ${otp}`);
-    } else if (user.phone) {
-      await sendSMS(user.phone, `Your OTP for Tumina is: ${otp}`);
-    }
-
-    return res.json({ message: 'OTP resent successfully' });
-  } catch (err) {
-    console.error('Resend OTP error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
 
 /**
  * @route POST /login
- * @desc Login with phone or email and password
  */
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { identifier, password } = req.body;
-    if (!identifier || !password) {
-      return res.status(400).json({ message: 'Please provide identifier and password' });
-    }
+    const isEmail = identifier.includes('@');
+    const query = isEmail ? { email: identifier.toLowerCase() } : { phone: identifier };
 
-    const user = users.find(
-      (u) =>
-        (u.email === identifier.toLowerCase() || u.phone === identifier) &&
-        u.password === password
-    );
-
+    const user = await User.findOne(query);
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    if (!user.verified) {
+
+    // Check Password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
+
+    if (!user.isVerified) {
       return res.status(403).json({ message: 'Account not verified. Please verify your OTP.' });
     }
 
     return res.json({
-      id: user.id,
-      name: user.name,
+      id: user._id,
       role: user.role,
-      busCompany: user.busCompany || null,
-      handlerName: user.handlerName || null
+      companyName: user.companyName
     });
   } catch (err) {
-    console.error('Login error:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 });
